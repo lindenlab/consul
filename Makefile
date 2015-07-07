@@ -1,55 +1,42 @@
-DEPS = $(shell go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
-PACKAGES = $(shell go list ./...)
-VETARGS?=-asmdecl -atomic -bool -buildtags -copylocks -methods \
-         -nilfunc -printf -rangeloops -shift -structtags -unsafeptr
+APP_NAME := consul
+SRC_DIR := src/github.com/hashicorp
+APP_DIR := $(SRC_DIR)/$(APP_NAME)
 
-all: deps format
-	@mkdir -p bin/
-	@bash --norc -i ./scripts/build.sh
+REGISTRY := registry.docker
+BUILD_IMAGE := $(REGISTRY)/golang
+APP_IMAGE := $(REGISTRY)/hashicorp/$(APP_NAME)
+DOCKER_RUN := docker run -i --rm -v "$(shell pwd)":/go $(BUILD_IMAGE)
+UID := $(shell id -u)
+GID := $(shell id -g)
 
-cov:
-	gocov test ./... | gocov-html > /tmp/coverage.html
-	open /tmp/coverage.html
+all: test binary
 
-deps:
-	@echo "--> Installing build dependencies"
-	@go get -d -v ./... $(DEPS)
+$(APP_DIR):
+	mkdir -p $(SRC_DIR)
+	ln -s ../../../ $(APP_DIR)
 
-updatedeps: deps
-	@echo "--> Updating build dependencies"
-	@go get -d -f -u ./... $(DEPS)
+deps: $(APP_DIR)
+
+binary: deps
+	$(DOCKER_RUN) bash -c "cd /go/$(APP_DIR); go get && go install"
+	$(MAKE) chown
 
 test: deps
-	@./scripts/verify_no_uuid.sh
-	@./scripts/test.sh
-	@$(MAKE) vet
+	$(DOCKER_RUN) bash -c "cd /go/$(APP_DIR); go get && go test"
+	$(MAKE) chown
 
-integ:
-	go list ./... | INTEG_TESTS=yes xargs -n1 go test
+docker: binary 
+	docker build -t $(APP_IMAGE) .
 
-cover: deps
-	./scripts/verify_no_uuid.sh
-	go list ./... | xargs -n1 go test --cover
+push: docker
+	docker push $(APP_IMAGE)
 
-format: deps
-	@echo "--> Running go fmt"
-	@go fmt $(PACKAGES)
+chown:
+	$(DOCKER_RUN) chown -R $(UID):$(GID) /go/bin /go/pkg /go/src 
+	test -f $(APP_NAME) && $(DOCKER_RUN) chown -R $(UID):$(GID) /go/$(APP_NAME) || true
 
-vet:
-	@go tool vet 2>/dev/null ; if [ $$? -eq 3 ]; then \
-		go get golang.org/x/tools/cmd/vet; \
-	fi
-	@echo "--> Running go tool vet $(VETARGS) ."
-	@go tool vet $(VETARGS) . ; if [ $$? -eq 1 ]; then \
-		echo ""; \
-		echo "Vet found suspicious constructs. Please check the reported constructs"; \
-		echo "and fix them if necessary before submitting the code for reviewal."; \
-	fi
+clean:
+	$(MAKE) chown || true
+	$(DOCKER_RUN) rm -rf /go/bin /go/pkg /go/src /go/$(APP_NAME)
 
-web:
-	./scripts/website_run.sh
-
-web-push:
-	./scripts/website_push.sh
-
-.PHONY: all cov deps integ test vet web web-push test-nodep
+.PHONY: all binary test chown clean

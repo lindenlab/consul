@@ -1,0 +1,5 @@
+consul (0.5.2~linden1) unstable; urgency=medium
+
+  * Initial release.
+
+ -- Don Kjer <don@lindenlab.com>  Thu, 09 Apr 2015 19:20:43 +0000

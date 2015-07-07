@@ -1,0 +1,12 @@
+Source: consul
+Maintainer: Don Kjer <don@lindenlab.com>
+Section: misc
+Priority: extra
+Standards-Version: 3.9.2
+Build-Depends: debhelper (>= 9), dh-systemd (>= 1.5)
+
+Package: consul
+Architecture: any
+Description: Consul is a tool for service discovery and configuration
+ Consul is a tool for service discovery and configuration. Consul is
+ distributed, highly available, and extremely scalable.

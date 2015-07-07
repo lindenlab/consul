@@ -1,0 +1,15 @@
+[Unit]
+Description=consul
+Documentation=https://consul.io
+
+[Service]
+User=consul
+Group=consul
+ExecStart=/usr/bin/consul agent -config-dir /etc/consul.d $EXTRA_OPTS
+ExecStop=/usr/bin/consul leave
+
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
