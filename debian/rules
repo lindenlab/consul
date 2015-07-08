@@ -7,4 +7,4 @@ GID := $(shell id -g)
 	dh $@ --with-systemd
 
 override_dh_auto_build:
-	make binary
+	make

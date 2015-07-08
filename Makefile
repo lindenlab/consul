@@ -1,42 +1,94 @@
-APP_NAME := consul
-SRC_DIR := src/github.com/hashicorp
-APP_DIR := $(SRC_DIR)/$(APP_NAME)
+THIS_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+VETARGS?=-asmdecl -atomic -bool -buildtags -copylocks -methods \
+         -nilfunc -printf -rangeloops -shift -structtags -unsafeptr
 
-REGISTRY := registry.docker
-BUILD_IMAGE := $(REGISTRY)/golang
-APP_IMAGE := $(REGISTRY)/hashicorp/$(APP_NAME)
-DOCKER_RUN := docker run -i --rm -v "$(shell pwd)":/go $(BUILD_IMAGE)
+APP_NAME := consul
+MODULE_SRC := src/github.com/hashicorp/consul
+DOCKER_REGISTRY := registry.docker
+DEFAULT_GOPATH = /tmp/gobuild-$(APP_NAME)-$(USER)
+export GOPATH ?= $(DEFAULT_GOPATH)
+
+BUILD_IMAGE := $(DOCKER_REGISTRY)/golang:1.3
 UID := $(shell id -u)
 GID := $(shell id -g)
+USERNAME := $(shell getent passwd $(UID) | cut -d: -f1)
+GROUPNAME := $(shell getent group $(GID) | cut -d: -f1)
+define DOCKERFILE
+FROM $(BUILD_IMAGE)  
+RUN ( groupadd --gid $(GID) $(GROUPNAME) || true ) && \
+    useradd --uid $(UID) --home-dir /home/$(USERNAME) $(USERNAME) -g $(GROUPNAME) && \
+	mkdir -p "/go/$(MODULE_SRC)" "/home/$(USERNAME)" && \
+	chown -R $(USERNAME):$(GROUPNAME) /go "/home/$(USERNAME)"
+USER $(USERNAME):$(GROUPNAME)
+WORKDIR /go/$(MODULE_SRC)
+endef
 
-all: test binary
+DOCKER_MD5 := $(shell echo '$(DOCKERFILE)' | md5sum | cut -d' ' -f1)
+DEV_IMAGE := gobuild-$(APP_NAME)-$(USER):$(DOCKER_MD5)
+DOCKER_STAMP := $(DOCKER_MD5).stamp
+BUILD_DEPS := $(DOCKER_STAMP) $(GOPATH)/$(MODULE_SRC)
 
-$(APP_DIR):
-	mkdir -p $(SRC_DIR)
-	ln -s ../../../ $(APP_DIR)
+export DOCKERFILE
+BUILD := docker run -i --rm -v "$(GOPATH)":/go \
+        -v "$(THIS_DIR)":"/go/$(MODULE_SRC)" $(DEV_IMAGE)
 
-deps: $(APP_DIR)
-
-binary: deps
-	$(DOCKER_RUN) bash -c "cd /go/$(APP_DIR); go get && go install"
-	$(MAKE) chown
-
-test: deps
-	$(DOCKER_RUN) bash -c "cd /go/$(APP_DIR); go get && go test"
-	$(MAKE) chown
-
-docker: binary 
-	docker build -t $(APP_IMAGE) .
-
-push: docker
-	docker push $(APP_IMAGE)
-
-chown:
-	$(DOCKER_RUN) chown -R $(UID):$(GID) /go/bin /go/pkg /go/src 
-	test -f $(APP_NAME) && $(DOCKER_RUN) chown -R $(UID):$(GID) /go/$(APP_NAME) || true
+all: deps format | $(BUILD_DEPS)
+	@mkdir -p bin/
+	@$(BUILD) /bin/bash --norc -i ./scripts/build.sh
 
 clean:
-	$(MAKE) chown || true
-	$(DOCKER_RUN) rm -rf /go/bin /go/pkg /go/src /go/$(APP_NAME)
+	rm -f *.stamp bin/$(APP_NAME) $(GOPATH)/$(MODULE_SRC)/*.stamp coverage.html
+	rm -rf $(DEFAULT_GOPATH)
 
-.PHONY: all binary test chown clean
+$(GOPATH)/$(MODULE_SRC):
+	mkdir -p $@
+
+$(DOCKER_STAMP): $(GOPATH)/$(MODULE_SRC)
+	echo "$$DOCKERFILE" | docker build -t $(DEV_IMAGE) -
+	touch $@
+
+cov: | $(BUILD_DEPS)
+	$(BUILD) gocov test ./... | gocov-html > coverage.html
+
+deps: | $(BUILD_DEPS)
+	@echo "--> Installing build dependencies"
+	@$(BUILD) go get -d -v ./... $$($(BUILD) go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
+
+updatedeps: deps | $(BUILD_DEPS)
+	@echo "--> Updating build dependencies"
+	@$(BUILD) go get -d -f -u ./... $$($(BUILD) go list -f '{{range .TestImports}}{{.}} {{end}}' ./...)
+
+test: deps | $(BUILD_DEPS)
+	@$(BUILD) ./scripts/verify_no_uuid.sh
+	@$(BUILD) ./scripts/test.sh
+	@$(MAKE) vet
+
+integ: | $(BUILD_DEPS)
+	$(BUILD) go list ./... | $(BUILD) INTEG_TESTS=yes xargs -n1 go test
+
+cover: deps | $(BUILD_DEPS)
+	$(BUILD) ./scripts/verify_no_uuid.sh
+	$(BUILD) go list ./... | xargs -n1 go test --cover
+
+format: deps | $(BUILD_DEPS)
+	@echo "--> Running go fmt"
+	@$(BUILD) go fmt $$($(BUILD) go list ./...)
+
+vet: | $(BUILD_DEPS)
+	@$(BUILD) go tool vet 2>/dev/null ; if [ $$? -eq 3 ]; then \
+		$(BUILD) go get golang.org/x/tools/cmd/vet; \
+	fi
+	@echo "--> Running go tool vet $(VETARGS) ."
+	@$(BUILD) go tool vet $(VETARGS) . ; if [ $$? -eq 1 ]; then \
+		echo ""; \
+		echo "Vet found suspicious constructs. Please check the reported constructs"; \
+		echo "and fix them if necessary before submitting the code for reviewal."; \
+	fi
+
+web: | $(BUILD_DEPS)
+	$(BUILD) ./scripts/website_run.sh
+
+web-push: | $(BUILD_DEPS)
+	$(BUILD) ./scripts/website_push.sh
+
+.PHONY: all cov deps integ test vet web web-push test-nodep
