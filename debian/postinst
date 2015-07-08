@@ -23,7 +23,6 @@ set -e
 case "$1" in
     configure)
         /usr/sbin/adduser --system consul --home /var/lib/consul --group
-        systemctl enable consul-agent.service
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
