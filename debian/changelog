@@ -1,3 +1,9 @@
+consul (0.5.2~linden2) unstable; urgency=medium
+
+  * updating to upstream master a6317f2fb2ba9d5ae695f7fa703cfb30a1c59af1
+
+ -- Don Kjer <don@lindenlab.com>  Sat, 25 Jul 2015 17:05:35 +0000
+
 consul (0.5.2~linden1) unstable; urgency=medium
 
   * Initial release.
