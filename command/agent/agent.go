@@ -142,10 +142,16 @@ func Create(config *Config, logOutput io.Writer) (*Agent, error) {
 		if ip := net.ParseIP(config.AdvertiseAddr); ip == nil {
 			return nil, fmt.Errorf("Failed to parse advertise address: %v", config.AdvertiseAddr)
 		}
-	} else if config.BindAddr != "0.0.0.0" && config.BindAddr != "" {
+	} else if config.BindAddr != "0.0.0.0" && config.BindAddr != "" && config.BindAddr != "[::]" {
 		config.AdvertiseAddr = config.BindAddr
 	} else {
-		ip, err := consul.GetPrivateIP()
+		var err error
+		var ip net.IP
+		if config.BindAddr == "[::]" {
+			ip, err = consul.GetPublicIPv6()
+		} else {
+			ip, err = consul.GetPrivateIP()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("Failed to get advertise address: %v", err)
 		}
@@ -292,6 +298,12 @@ func (a *Agent) consulConfig() *consul.Config {
 	if a.config.AdvertiseAddrs.SerfWan != nil {
 		base.SerfWANConfig.MemberlistConfig.AdvertiseAddr = a.config.AdvertiseAddrs.SerfWan.IP.String()
 		base.SerfWANConfig.MemberlistConfig.AdvertisePort = a.config.AdvertiseAddrs.SerfWan.Port
+	}
+	if a.config.ReconnectTimeoutLan != 0 {
+		base.SerfLANConfig.ReconnectTimeout = a.config.ReconnectTimeoutLan
+	}
+	if a.config.ReconnectTimeoutWan != 0 {
+		base.SerfWANConfig.ReconnectTimeout = a.config.ReconnectTimeoutWan
 	}
 	if a.config.AdvertiseAddrs.RPC != nil {
 		base.RPCAdvertise = a.config.AdvertiseAddrs.RPC
@@ -657,7 +669,7 @@ func (a *Agent) persistService(service *structs.NodeService) error {
 	}
 	encoded, err := json.Marshal(wrapped)
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(svcPath), 0700); err != nil {
 		return err
@@ -695,7 +707,7 @@ func (a *Agent) persistCheck(check *structs.HealthCheck, chkType *CheckType) err
 
 	encoded, err := json.Marshal(wrapped)
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(checkPath), 0700); err != nil {
 		return err
@@ -962,6 +974,7 @@ func (a *Agent) AddCheck(check *structs.HealthCheck, chkType *CheckType, persist
 				CheckID:  check.CheckID,
 				Script:   chkType.Script,
 				Interval: chkType.Interval,
+				Timeout:  chkType.Timeout,
 				Logger:   a.logger,
 				ReapLock: &a.reapLock,
 			}

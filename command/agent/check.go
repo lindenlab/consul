@@ -2,7 +2,7 @@ package agent
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -101,6 +101,7 @@ type CheckMonitor struct {
 	CheckID  string
 	Script   string
 	Interval time.Duration
+	Timeout  time.Duration
 	Logger   *log.Logger
 	ReapLock *sync.RWMutex
 
@@ -180,7 +181,11 @@ func (c *CheckMonitor) check() {
 		errCh <- cmd.Wait()
 	}()
 	go func() {
-		time.Sleep(30 * time.Second)
+		if c.Timeout > 0 {
+			time.Sleep(c.Timeout)
+		} else {
+			time.Sleep(30 * time.Second)
+		}
 		errCh <- fmt.Errorf("Timed out running check '%s'", c.Script)
 	}()
 	err = <-errCh
@@ -232,6 +237,9 @@ type CheckTTL struct {
 
 	timer *time.Timer
 
+	lastOutput     string
+	lastOutputLock sync.RWMutex
+
 	stop     bool
 	stopCh   chan struct{}
 	stopLock sync.Mutex
@@ -265,12 +273,25 @@ func (c *CheckTTL) run() {
 		case <-c.timer.C:
 			c.Logger.Printf("[WARN] agent: Check '%v' missed TTL, is now critical",
 				c.CheckID)
-			c.Notify.UpdateCheck(c.CheckID, structs.HealthCritical, "TTL expired")
+			c.Notify.UpdateCheck(c.CheckID, structs.HealthCritical, c.getExpiredOutput())
 
 		case <-c.stopCh:
 			return
 		}
 	}
+}
+
+// getExpiredOutput formats the output for the case when the TTL is expired.
+func (c *CheckTTL) getExpiredOutput() string {
+	c.lastOutputLock.RLock()
+	defer c.lastOutputLock.RUnlock()
+
+	const prefix = "TTL expired"
+	if c.lastOutput == "" {
+		return prefix
+	}
+
+	return fmt.Sprintf("%s (last output before timeout follows): %s", prefix, c.lastOutput)
 }
 
 // SetStatus is used to update the status of the check,
@@ -279,6 +300,12 @@ func (c *CheckTTL) SetStatus(status, output string) {
 	c.Logger.Printf("[DEBUG] agent: Check '%v' status is now %v",
 		c.CheckID, status)
 	c.Notify.UpdateCheck(c.CheckID, status, output)
+
+	// Store the last output so we can retain it if the TTL expires.
+	c.lastOutputLock.Lock()
+	c.lastOutput = output
+	c.lastOutputLock.Unlock()
+
 	c.timer.Reset(c.TTL)
 }
 
@@ -391,6 +418,7 @@ func (c *CheckHTTP) check() {
 	}
 
 	req.Header.Set("User-Agent", HttpUserAgent)
+	req.Header.Set("Accept", "text/plain, text/*, */*")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -400,13 +428,14 @@ func (c *CheckHTTP) check() {
 	}
 	defer resp.Body.Close()
 
-	// Format the response body
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
+	// Read the response into a circular buffer to limit the size
+	output, _ := circbuf.NewBuffer(CheckBufSize)
+	if _, err := io.Copy(output, resp.Body); err != nil {
 		c.Logger.Printf("[WARN] agent: check '%v': Get error while reading body: %s", c.CheckID, err)
-		body = []byte{}
 	}
-	result := fmt.Sprintf("HTTP GET %s: %s Output: %s", c.HTTP, resp.Status, body)
+
+	// Format the response body
+	result := fmt.Sprintf("HTTP GET %s: %s Output: %s", c.HTTP, resp.Status, output.String())
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		// PASSING (2xx)

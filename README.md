@@ -43,14 +43,13 @@ https://www.consul.io/docs
 ## Developing Consul
 
 If you wish to work on Consul itself, you'll first need [Go](https://golang.org)
-installed (version 1.5.3+ is _required_). Make sure you have Go properly installed,
+installed (version 1.6+ is _required_). Make sure you have Go properly installed,
 including setting up your [GOPATH](https://golang.org/doc/code.html#GOPATH).
 
 Next, clone this repository into `$GOPATH/src/github.com/hashicorp/consul` and
 then just type `make`. In a few moments, you'll have a working `consul` executable:
 
 ```
-$ go get -u ./...
 $ make
 ...
 $ bin/consul
@@ -66,7 +65,7 @@ format the code according to Go standards.
 
 ### Building Consul on Windows
 
-Make sure Go 1.5.3+ is installed on your system and that the Go command is in your
+Make sure Go 1.6+ is installed on your system and that the Go command is in your
 %PATH%.
 
 For building Consul on Windows, you also need to have MinGW installed.

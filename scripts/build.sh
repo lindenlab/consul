@@ -4,6 +4,7 @@
 set -e
 
 export GO15VENDOREXPERIMENT=1
+export CGO_ENABLED=0
 
 # Get the parent directory of where this script is.
 SOURCE="${BASH_SOURCE[0]}"
@@ -14,9 +15,9 @@ DIR="$( cd -P "$( dirname "$SOURCE" )/.." && pwd )"
 cd "$DIR"
 
 # Get the git commit
-GIT_COMMIT=$(git rev-parse HEAD)
-GIT_DIRTY=$(test -n "`git status --porcelain`" && echo "+CHANGES" || true)
-GIT_DESCRIBE=$(git describe --tags)
+GIT_COMMIT="$(git rev-parse HEAD)"
+GIT_DIRTY="$(test -n "`git status --porcelain`" && echo "+CHANGES" || true)"
+GIT_DESCRIBE="$(git describe --tags)"
 
 # Determine the arch/os combos we're building for
 XC_ARCH=${XC_ARCH:-"386 amd64 arm"}
@@ -39,7 +40,7 @@ echo "==> Building..."
 $GOPATH/bin/gox \
     -os="${XC_OS}" \
     -arch="${XC_ARCH}" \
-    -ldflags "-X main.GitCommit ${GIT_COMMIT}${GIT_DIRTY} -X main.GitDescribe ${GIT_DESCRIBE}" \
+    -ldflags "-X main.GitCommit='${GIT_COMMIT}${GIT_DIRTY}' -X main.GitDescribe='${GIT_DESCRIBE}'" \
     -output "pkg/{{.OS}}_{{.Arch}}/consul" \
     .
 
